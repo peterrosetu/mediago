@@ -1,4 +1,5 @@
 import { Conversion } from "./entity/Conversion.ts";
+import { Video } from "./entity/Video.ts";
 
 export type Controller = Record<string | symbol, any>;
 
@@ -9,7 +10,9 @@ export interface DownloadItem {
   url: string;
   headers?: string;
   status?: DownloadStatus;
+  folder?: string;
   isLive?: boolean;
+  createdDate?: string;
 }
 
 export enum DownloadFilter {
@@ -63,6 +66,7 @@ export interface DownloadProgress {
 export enum DownloadType {
   m3u8 = "m3u8",
   bilibili = "bilibili",
+  direct = "direct",
 }
 export interface DownloadParams {
   id: number;
@@ -75,4 +79,15 @@ export interface DownloadParams {
   proxy?: string;
   deleteSegments?: boolean;
   callback: (progress: DownloadProgress) => void;
+  folder?: string;
+}
+
+export interface VideoStat extends Video {
+  exists?: boolean;
+  file?: string;
+}
+
+export interface ListPagination {
+  total: number;
+  list: VideoStat[];
 }

@@ -1,68 +1,109 @@
 import { ConfigProvider, theme } from "antd";
 import React, { FC, Suspense, lazy, useEffect } from "react";
-import { useDispatch } from "react-redux";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { setAppStore, increase, setBrowserStore, PageMode } from "./store";
 import "dayjs/locale/zh-cn";
 import zhCN from "antd/locale/zh_CN";
-import "./App.scss";
-import useElectron from "./hooks/electron";
+import useElectron from "@/hooks/useElectron";
 import Loading from "./components/Loading";
 import { DownloadFilter } from "./types";
-import { tdApp } from "./utils";
-import { useAsyncEffect } from "ahooks";
+import { isWeb, tdApp } from "./utils";
+import { useAsyncEffect, useMemoizedFn } from "ahooks";
+import {
+  themeSelector,
+  updateSelector,
+  useSessionStore,
+} from "./store/session";
+import { useShallow } from "zustand/react/shallow";
+import { DOWNLOAD_FAIL, DOWNLOAD_SUCCESS, PAGE_LOAD } from "./const";
+import { useAppStore, setAppStoreSelector } from "./store/app";
+import { PageMode, setBrowserSelector, useBrowserStore } from "./store/browser";
+import { downloadStoreSelector, useDownloadStore } from "./store/download";
+import { App as AntdApp } from "antd";
 
 const AppLayout = lazy(() => import("./layout/App"));
 const HomePage = lazy(() => import("./pages/HomePage"));
 const SourceExtract = lazy(() => import("./pages/SourceExtract"));
 const SettingPage = lazy(() => import("./pages/SettingPage"));
 const ConverterPage = lazy(() => import("./pages/Converter"));
+const PlayerPage = lazy(() => import("./pages/Player"));
 
 function getAlgorithm(appTheme: "dark" | "light") {
   return appTheme === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm;
 }
 
 const App: FC = () => {
-  const dispatch = useDispatch();
-  const [appTheme, setAppTheme] = React.useState<"dark" | "light">("light");
   const { addIpcListener, removeIpcListener, getMachineId } = useElectron();
+  const { setUpdateAvailable, setUploadChecking } = useSessionStore(
+    useShallow(updateSelector),
+  );
+  const { setAppStore } = useAppStore(useShallow(setAppStoreSelector));
+  const { setBrowserStore } = useBrowserStore(useShallow(setBrowserSelector));
+  const { increase } = useDownloadStore(useShallow(downloadStoreSelector));
+  const { theme, setTheme } = useSessionStore(useShallow(themeSelector));
 
-  const themeChange = (event: MediaQueryListEvent) => {
+  const themeChange = useMemoizedFn((event: MediaQueryListEvent) => {
     if (event.matches) {
-      setAppTheme("dark");
+      setTheme("dark");
     } else {
-      setAppTheme("light");
+      setTheme("light");
     }
-  };
+  });
 
   // 监听store变化
-  const onAppStoreChange = (event: any, store: AppStore) => {
-    dispatch(setAppStore(store));
-  };
+  const onAppStoreChange = useMemoizedFn((event: any, store: AppStore) => {
+    setAppStore(store);
+  });
 
-  const onReceiveDownloadItem = () => {
-    dispatch(increase());
-  };
+  const onReceiveDownloadItem = useMemoizedFn(() => {
+    increase();
+  });
 
-  const onChangePrivacy = () => {
-    dispatch(setBrowserStore({ url: "", title: "", mode: PageMode.Default }));
-  };
+  const onChangePrivacy = useMemoizedFn(() => {
+    setBrowserStore({ url: "", title: "", mode: PageMode.Default });
+  });
 
   useEffect(() => {
+    const updateAvailable = () => {
+      setUpdateAvailable(true);
+      setUploadChecking(false);
+    };
+    const updateNotAvailable = () => {
+      setUpdateAvailable(false);
+      setUploadChecking(false);
+    };
+    const checkingForUpdate = () => {
+      setUploadChecking(true);
+    };
+    const onDownloadSuccess = () => {
+      tdApp.onEvent(DOWNLOAD_SUCCESS);
+    };
+    const onDownloadFailed = () => {
+      tdApp.onEvent(DOWNLOAD_FAIL);
+    };
     addIpcListener("store-change", onAppStoreChange);
     addIpcListener("download-item-notifier", onReceiveDownloadItem);
     addIpcListener("change-privacy", onChangePrivacy);
+    addIpcListener("updateAvailable", updateAvailable);
+    addIpcListener("updateNotAvailable", updateNotAvailable);
+    addIpcListener("checkingForUpdate", checkingForUpdate);
+    addIpcListener("download-success", onDownloadSuccess);
+    addIpcListener("download-failed", onDownloadFailed);
 
     return () => {
       removeIpcListener("store-change", onAppStoreChange);
       removeIpcListener("download-item-notifier", onReceiveDownloadItem);
       removeIpcListener("change-privacy", onChangePrivacy);
+      removeIpcListener("updateAvailable", updateAvailable);
+      removeIpcListener("updateNotAvailable", updateNotAvailable);
+      removeIpcListener("checkingForUpdate", checkingForUpdate);
+      removeIpcListener("download-success", onDownloadSuccess);
+      removeIpcListener("download-failed", onDownloadFailed);
     };
   }, []);
 
   useAsyncEffect(async () => {
     const deviceId = await getMachineId();
-    tdApp.onEvent("页面加载", { deviceId });
+    tdApp.onEvent(PAGE_LOAD, { deviceId });
   }, []);
 
   useEffect(() => {
@@ -70,9 +111,9 @@ const App: FC = () => {
     isDarkTheme.addEventListener("change", themeChange);
 
     if (isDarkTheme.matches) {
-      setAppTheme("dark");
+      setTheme("dark");
     } else {
-      setAppTheme("light");
+      setTheme("light");
     }
 
     return () => {
@@ -83,71 +124,81 @@ const App: FC = () => {
   return (
     <ConfigProvider
       locale={zhCN}
-      componentSize="small"
-      theme={{ algorithm: getAlgorithm(appTheme) }}
+      componentSize={isWeb ? undefined : "small"}
+      theme={{ algorithm: getAlgorithm(theme) }}
     >
-      <BrowserRouter>
-        <Routes>
-          <Route
-            path="/"
-            element={
-              <Suspense fallback={<Loading />}>
-                <AppLayout />
-              </Suspense>
-            }
-          >
+      <AntdApp className="size-full overflow-hidden">
+        <BrowserRouter>
+          <Routes>
             <Route
-              index
+              path="/"
               element={
                 <Suspense fallback={<Loading />}>
-                  <HomePage />
+                  <AppLayout />
+                </Suspense>
+              }
+            >
+              <Route
+                index
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <HomePage />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="done"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <HomePage filter={DownloadFilter.done} />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="source"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <SourceExtract />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="settings"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <SettingPage />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="converter"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <ConverterPage />
+                  </Suspense>
+                }
+              />
+              <Route path="*" element={<div>404</div>} />
+            </Route>
+            <Route
+              path="/browser"
+              element={
+                <Suspense fallback={<Loading />}>
+                  <SourceExtract page={true} />
                 </Suspense>
               }
             />
             <Route
-              path="done"
+              path="player"
               element={
                 <Suspense fallback={<Loading />}>
-                  <HomePage filter={DownloadFilter.done} />
+                  <PlayerPage />
                 </Suspense>
               }
             />
-            <Route
-              path="source"
-              element={
-                <Suspense fallback={<Loading />}>
-                  <SourceExtract />
-                </Suspense>
-              }
-            />
-            <Route
-              path="settings"
-              element={
-                <Suspense fallback={<Loading />}>
-                  <SettingPage />
-                </Suspense>
-              }
-            />
-            <Route
-              path="converter"
-              element={
-                <Suspense fallback={<Loading />}>
-                  <ConverterPage />
-                </Suspense>
-              }
-            />
-            <Route path="*" element={<div>404</div>} />
-          </Route>
-          <Route
-            path="/browser"
-            element={
-              <Suspense fallback={<Loading />}>
-                <SourceExtract page={true} />
-              </Suspense>
-            }
-          />
-        </Routes>
-      </BrowserRouter>
+          </Routes>
+        </BrowserRouter>
+      </AntdApp>
     </ConfigProvider>
   );
 };

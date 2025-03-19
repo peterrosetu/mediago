@@ -35,3 +35,29 @@ export function error(message = "fail"): IpcResponse {
     data: null,
   };
 }
+
+// Determine whether it is a function of deeplink
+export function isDeeplink(url: string): boolean {
+  try {
+    const parsedUrl = new URL(url);
+    return parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:";
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
+ * from url get file extension
+ * @param url URL string
+ * @returns string file extension (without dot), if no extension returns empty string
+ */
+export function getFileExtension(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    const extension = pathname.split(".").pop() || "";
+    return extension.toLowerCase();
+  } catch {
+    return "";
+  }
+}

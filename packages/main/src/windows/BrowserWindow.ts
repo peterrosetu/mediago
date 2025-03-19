@@ -18,7 +18,7 @@ export default class BrowserWindow extends Window {
   ) {
     super({
       width: 1100,
-      minWidth: 414,
+      minWidth: 600,
       height: 680,
       minHeight: 680,
       show: false,
@@ -39,7 +39,7 @@ export default class BrowserWindow extends Window {
   handleNewWindowsVal = (newValue: unknown) => {
     if (!this.window) return;
 
-    // 向所有窗口发送通知
+    // Send notifications to all Windows
     if (newValue === false) {
       if (this.window && !this.window.isDestroyed()) {
         this.window.close();

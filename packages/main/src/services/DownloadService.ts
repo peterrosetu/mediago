@@ -13,19 +13,23 @@ import VideoRepository from "../repository/VideoRepository.ts";
 import {
   Platform,
   biliDownloaderBin,
+  gopeedBin,
   m3u8DownloaderBin,
 } from "../helper/index.ts";
 import * as pty from "node-pty";
 import stripAnsi from "strip-ansi";
+import i18n from "../i18n/index.ts";
+import path from "path";
+import { getFileExtension } from "../helper/utils.ts";
 
 interface DownloadContext {
-  // 是否为直播
+  // Whether it is live
   isLive: boolean;
-  // 下载进度
+  // Download progress
   percent: string;
-  // 下载速度
+  // Download speed
   speed: string;
-  // 是否已经 ready
+  // Ready
   ready: boolean;
 }
 
@@ -36,8 +40,13 @@ export interface DownloadOptions {
   id: number;
 }
 
+interface Args {
+  argsName: string[] | null;
+  postfix?: string;
+}
+
 interface Schema {
-  args: Record<string, { argsName: string[] | null }>;
+  args: Record<string, Args>;
   consoleReg: {
     percent: string;
     speed: string;
@@ -50,6 +59,7 @@ interface Schema {
   type: string;
 }
 
+// FIXME: Multilingual regular expressions
 const processList: Schema[] = [
   {
     type: "m3u8",
@@ -65,9 +75,9 @@ const processList: Schema[] = [
       name: {
         argsName: ["--save-name"],
       },
-      // headers: {
-      //   argsName: ["--headers"],
-      // },
+      headers: {
+        argsName: ["--header"],
+      },
       deleteSegments: {
         argsName: ["--del-after-done"],
       },
@@ -75,7 +85,15 @@ const processList: Schema[] = [
         argsName: ["--custom-proxy"],
       },
       __common__: {
-        argsName: ["--no-log"],
+        argsName: [
+          "--no-log",
+          "--auto-select",
+          "--ui-language",
+          "zh-CN",
+          "--live-real-time-merge",
+          "--check-segments-count",
+          "false",
+        ],
       },
     },
     consoleReg: {
@@ -97,12 +115,39 @@ const processList: Schema[] = [
       localDir: {
         argsName: ["--work-dir"],
       },
+      name: {
+        argsName: ["--file-pattern"],
+      },
     },
     consoleReg: {
       speed: "([\\d.]+\\s[GMK]B/s)",
       percent: "([\\d.]+)%",
       error: "ERROR",
       start: "开始下载",
+      isLive: "检测到直播流",
+    },
+  },
+  {
+    type: "direct",
+    platform: [Platform.Linux, Platform.MacOS, Platform.Windows],
+    bin: gopeedBin,
+    args: {
+      localDir: {
+        argsName: ["-D"],
+      },
+      name: {
+        argsName: ["-N"],
+        postfix: "@@AUTO@@",
+      },
+      url: {
+        argsName: null,
+      },
+    },
+    consoleReg: {
+      percent: "([\\d.]+)%",
+      speed: "([\\d.]+[GMK]B/s)",
+      error: "fail",
+      start: "downloading...",
       isLive: "检测到直播流",
     },
   },
@@ -194,7 +239,7 @@ export default class DownloadService extends EventEmitter {
     } catch (err: any) {
       if (err.message === "AbortError") {
         this.logger.info(`taskId: ${task.id} stopped`);
-        // 下载暂停
+        // Download pause
         await this.videoRepository.changeVideoStatus(
           task.id,
           DownloadStatus.Stopped
@@ -202,7 +247,7 @@ export default class DownloadService extends EventEmitter {
         this.emit("download-stop", task.id);
       } else {
         this.logger.info(`taskId: ${task.id} failed`);
-        // 下载失败
+        // Download failure
         await this.videoRepository.changeVideoStatus(
           task.id,
           DownloadStatus.Failed
@@ -212,7 +257,7 @@ export default class DownloadService extends EventEmitter {
     } finally {
       this.removeTask(task.id);
 
-      // 传输完成
+      // Transmission complete
       if (this.queue.length === 0 && this.active.length === 0) {
         // this.emit("download-finish");
       }
@@ -220,10 +265,10 @@ export default class DownloadService extends EventEmitter {
   }
 
   removeTask(id: number) {
-    // 处理当前正在活动的任务
+    // Process the currently active task
     const doneId = this.active.findIndex((i) => i.id === id);
     this.active.splice(doneId, 1);
-    // 处理完成的任务
+    // Process completed tasks
     if (this.active.length < this.limit) {
       this.runTask();
     }
@@ -280,7 +325,7 @@ export default class DownloadService extends EventEmitter {
         if (exitCode === 0) {
           resolve();
         } else {
-          reject(new Error("未知错误"));
+          reject(new Error(i18n.t("unknownError")));
         }
       });
     });
@@ -297,33 +342,46 @@ export default class DownloadService extends EventEmitter {
       headers,
       callback,
       proxy,
+      folder,
     } = params;
 
     const spawnParams = [];
     for (const key of Object.keys(schema.args)) {
-      const { argsName } = schema.args[key];
+      const { argsName, postfix } = schema.args[key];
       if (key === "url") {
         argsName && spawnParams.push(...argsName);
         spawnParams.push(url);
       }
       if (key === "localDir") {
-        argsName && argsName.forEach((i) => spawnParams.push(i, local));
+        let finalLocal = local;
+        if (folder) {
+          finalLocal = path.join(local, folder);
+        }
+        argsName && argsName.forEach((i) => spawnParams.push(i, finalLocal));
       }
       if (key === "name") {
-        argsName && argsName.forEach((i) => spawnParams.push(i, name));
-      }
-
-      if (key === "headers") {
-        if (headers) {
-          const h: Record<string, unknown> = JSON.parse(headers);
-          Object.entries(h).forEach(([k, v]) => {
-            spawnParams.push("--header", `${k}: ${v}`);
-          });
+        let finalName = name;
+        if (postfix) {
+          if (postfix === "@@AUTO@@") {
+            const extension = getFileExtension(url);
+            finalName = `${name}.${extension}`;
+          } else {
+            finalName = `${name}${postfix}`;
+          }
         }
+        argsName && argsName.forEach((i) => spawnParams.push(i, finalName));
       }
 
-      if (key === "deleteSegments" && deleteSegments) {
-        argsName && spawnParams.push(...argsName);
+      if (key === "headers" && headers) {
+        const h: string[] = headers?.split("\n") || [];
+        h.forEach((str) => {
+          spawnParams.push("--header", str);
+        });
+      }
+
+      if (key === "deleteSegments") {
+        argsName &&
+          argsName.forEach((i) => spawnParams.push(i, String(deleteSegments)));
       }
 
       if (key === "proxy" && proxy) {
@@ -343,16 +401,16 @@ export default class DownloadService extends EventEmitter {
     const percentReg = RegExp(consoleReg.percent, "g");
 
     const onMessage = (ctx: DownloadContext, message: string) => {
-      // 解析是否为直播资源
+      // Resolve whether it is a live resource
       if (isLiveReg.test(message)) {
         ctx.isLive = true;
       }
-      // 解析下载进度
+      // Parse download progress
       const [, percent] = percentReg.exec(message) || [];
       if (percent && Number(ctx.percent || 0) < Number(percent)) {
         ctx.percent = percent;
       }
-      // 解析下载速度
+      // Parsing download speed
       const [, speed] = speedReg.exec(message) || [];
       if (speed) {
         ctx.speed = speed;
@@ -399,7 +457,7 @@ export default class DownloadService extends EventEmitter {
       .filter((i) => i.type === params.type);
 
     if (program.length === 0) {
-      return Promise.reject(new Error("不支持的下载类型"));
+      return Promise.reject(new Error(i18n.t("unsupportedDownloadType")));
     }
 
     const schema = program[0];

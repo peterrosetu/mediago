@@ -176,6 +176,39 @@ const electronApi = {
   clearWebviewCache(): Promise<void> {
     return ipcRenderer.invoke("clear-webview-cache");
   },
+  openPlayerWindow(): Promise<void> {
+    return ipcRenderer.invoke("open-player-window");
+  },
+  exportFavorites(): Promise<void> {
+    return ipcRenderer.invoke("export-favorites");
+  },
+  importFavorites(): Promise<void> {
+    return ipcRenderer.invoke("import-favorites");
+  },
+  checkUpdate(): Promise<void> {
+    return ipcRenderer.invoke("check-update");
+  },
+  startUpdate(): Promise<void> {
+    return ipcRenderer.invoke("start-update");
+  },
+  installUpdate(): Promise<void> {
+    return ipcRenderer.invoke("install-update");
+  },
+  exportDownloadList(): Promise<void> {
+    return ipcRenderer.invoke("export-download-list");
+  },
+  getVideoFolders(): Promise<string[]> {
+    return ipcRenderer.invoke("get-video-folders");
+  },
+  // ipc with main process to get url params
+  //   onUrlParams(callback: (url: string) => void): void {
+  //     ipcRenderer.on("url-params", (event, url) => {
+  //       callback(url);
+  //     });
+  //   },
+  getPageTitle(url: string): Promise<any> {
+    return ipcRenderer.invoke("get-page-title", url);
+  },
 };
 
 contextBridge.exposeInMainWorld(apiKey, electronApi);

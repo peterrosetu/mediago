@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - master
+  workflow_dispatch:
 
 # Workflow's jobs
 jobs:
@@ -23,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, macos-latest, macos-13, ubuntu-latest]
 
     # create steps
     steps:
@@ -60,4 +61,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mediago-${{ matrix.os }}
-          path: packages/main/release/mediago-setup-*
+          path: packages/main/release/mediago-*

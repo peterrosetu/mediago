@@ -31,6 +31,11 @@ export default class StoreService extends Store<AppStore> implements Vendor {
         machineId: "",
         downloadProxySwitch: false,
         autoUpgrade: true,
+        allowBeta: false,
+        closeMainWindow: false,
+        audioMuted: true,
+        enableDocker: false,
+        dockerUrl: "",
       },
     });
   }

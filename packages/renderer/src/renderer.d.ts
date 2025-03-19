@@ -14,6 +14,9 @@ declare interface DownloadItem {
   headers?: string;
   status?: DownloadStatus;
   isLive?: boolean;
+  log?: string;
+  folder?: string;
+  createdDate?: string;
 }
 
 declare interface VideoResponse {
@@ -46,40 +49,46 @@ declare interface UrlDetail {
 }
 
 declare interface AppStore {
-  // 本地存储地址
+  // Local storage address
   local: string;
-  // 下载完成提示音
+  // Download completion tone
   promptTone: boolean;
-  // 代理地址
+  // Proxy address
   proxy?: string;
-  // 是否开启代理
+  // Whether to enable agent
   useProxy?: boolean;
-  // 下载完成后删除原始文件
+  // Delete the original file after downloading
   deleteSegments?: boolean;
-  // 新窗口打开浏览器
+  // A new window opens the browser
   openInNewWindow?: boolean;
-  // 是否阻止广告
+  // Whether to block ads
   blockAds?: boolean;
-  // 主题
+  // theme
   theme?: AppTheme;
-  // 是否使用扩展
+  // Whether to use extensions
   useExtension?: boolean;
-  // 默认使用移动端UA
+  // The mobile UA is used by default
   isMobile?: boolean;
-  // 最大同时下载数
+  // Maximum number of simultaneous downloads
   maxRunner?: number;
-  // 语言
+  // Language
   language?: AppLanguage;
-  // 是否显示终端
+  // Show terminal or not
   showTerminal?: boolean;
-  // 隐私模式
+  // Privacy mode
   privacy?: boolean;
-  // 机器id
+  // Machine id
   machineId?: string;
-  // 下载代理设置
+  // Download proxy Settings
   downloadProxySwitch?: boolean;
-  // 自动更新
+  // Automatic update
   autoUpgrade?: boolean;
+  // Whether to play sounds in the browser. The default value is mute
+  audioMuted?: boolean;
+  // Whether to enable Docker
+  enableDocker?: boolean;
+  // Docker URL
+  dockerUrl?: string;
 }
 
 declare interface BrowserStore {
@@ -89,6 +98,7 @@ declare interface BrowserStore {
   status: BrowserStatus;
   errCode?: number;
   errMsg?: string;
+  sources: SourceData[];
 }
 
 declare interface DownloadProgress {
@@ -100,4 +110,14 @@ declare interface DownloadProgress {
 
 interface ObjectConstructor {
   keys<T>(o: T): (keyof T)[];
+}
+
+interface VideoStat extends DownloadItem {
+  exists?: boolean;
+  file?: string;
+}
+
+interface ListPagination {
+  total: number;
+  list: VideoStat[];
 }

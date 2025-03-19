@@ -7,7 +7,8 @@ const external = [
   "nock",
   "aws-sdk",
   "mock-aws-s3",
-  "@cliqz/adblocker-electron-preload",
+  "@ghostery/adblocker-electron",
+  "tldts-experimental",
   "node-pty",
 ];
 
@@ -39,7 +40,7 @@ function getConfig(): esbuild.BuildOptions {
 function buildOptions(
   entry: string,
   platform: esbuild.Platform,
-  target: string
+  target: string,
 ): esbuild.BuildOptions {
   return {
     ...getConfig(),
@@ -63,7 +64,8 @@ export function getReleaseConfig(): Configuration {
     buildVersion: process.env.APP_VERSION,
     appId: process.env.APP_ID,
     copyright: process.env.APP_COPYRIGHT,
-    artifactName: "${productName}-setup-${arch}-${buildVersion}.${ext}",
+    artifactName:
+      "${productName}-setup-${platform}-${arch}-${buildVersion}.${ext}",
     npmRebuild: true,
     directories: {
       output: "./release",
@@ -81,7 +83,11 @@ export function getReleaseConfig(): Configuration {
         to: "plugin",
       },
       {
-        from: "./app/bin/",
+        from: "./app/mobile",
+        to: "mobile",
+      },
+      {
+        from: "./bin/${platform}/${arch}",
         to: "bin",
       },
     ],
@@ -92,7 +98,12 @@ export function getReleaseConfig(): Configuration {
           target: "nsis",
           arch: ["x64"],
         },
+        "portable",
       ],
+    },
+    portable: {
+      artifactName:
+        "${productName}-portable-${platform}-${arch}-${buildVersion}.${ext}",
     },
     dmg: {
       contents: [
@@ -114,9 +125,17 @@ export function getReleaseConfig(): Configuration {
       target: [
         {
           target: "dmg",
-          arch: ["x64", "arm64"],
+          arch: [process.arch === "arm64" ? "arm64" : "x64"],
         },
       ],
+      extendInfo: {
+        CFBundleURLTypes: [
+          {
+            CFBundleURLName: "Mediago URL Scheme",
+            CFBundleURLSchemes: ["mediago"],
+          },
+        ],
+      },
     },
     linux: {
       category: "Utility",

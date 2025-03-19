@@ -8,16 +8,22 @@
   "type": "module",
   "scripts": {
     "dev": "tsx scripts/dev.ts && pnpm --parallel -F \"./packages/*\" run dev",
+    "dev:web": "pnpm --parallel -F \"./packages/*\" run dev:web",
     "build": "tsx scripts/build.ts",
     "build:plugin": "pnpm -F plugin run build",
     "build:main": "pnpm -F main run build",
+    "build:web": "pnpm -F renderer run build:web",
+    "build:backend": "pnpm -F backend run build",
     "build:renderer": "pnpm -F renderer run build",
+    "build:mobile": "pnpm -F mobile run build",
+    "build:web-release": "tsx scripts/web.ts",
+    "build:docker": "pnpm build:web-release && docker build -t caorushizi/mediago:latest .",
+    "rebuild:web": "pnpm -F backend rebuild",
+    "rebuild:electron": "pnpm -F main run rebuild",
     "beta": "pnpm run build && pnpm -F mediago run pack",
     "release": "pnpm run build && pnpm -F main run release",
-    "docs:dev": "vitepress dev docs",
-    "docs:build": "vitepress build docs",
-    "docs:preview": "vitepress preview docs",
     "types": "pnpm -F main run types",
+    "types:renderer": "pnpm -F renderer run types",
     "types:watch": "pnpm -F main run types:watch",
     "prepare": "husky",
     "commit": "git-cz",
@@ -38,24 +44,24 @@
     "@commitlint/core": "^19.3.0",
     "@commitlint/cz-commitlint": "^19.2.0",
     "@commitlint/format": "^19.3.0",
-    "@eslint/js": "^9.3.0",
-    "@waline/client": "^3.2.0",
+    "@eslint/js": "^8.57.0",
     "commitizen": "^4.3.0",
     "cross-env": "^7.0.3",
     "cspell": "^8.8.3",
     "cz-git": "^1.9.2",
-    "eslint": "^9.3.0",
+    "eslint": "^8.57.0",
     "globals": "^15.3.0",
     "husky": "^9.0.11",
     "tsx": "^4.11.0",
     "typescript-eslint": "^7.10.0",
-    "vitepress": "1.2.2",
-    "vue": "^3.4.27",
     "zx": "^8.1.1"
   },
   "pnpm": {
     "patchedDependencies": {
-      "@cliqz/adblocker@1.27.3": "patches/@cliqz__adblocker@1.27.3.patch"
+      "@ghostery/adblocker@2.3.1": "patches/@ghostery__adblocker@2.3.1.patch"
     }
+  },
+  "dependencies": {
+    "react-dom": "18.3.1"
   }
 }

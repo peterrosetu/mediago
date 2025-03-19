@@ -1,8 +1,8 @@
-import { protocol } from "electron";
+import { app, protocol } from "electron";
 import isDev from "electron-is-dev";
 import { pathExists, readFile } from "fs-extra";
 import { injectable } from "inversify";
-import { join } from "path";
+import path, { join } from "path";
 import { URL } from "url";
 import { defaultScheme } from "../helper/index.ts";
 import mime from "mime-types";
@@ -17,7 +17,7 @@ export default class ProtocolService {
       let filePath = join(__dirname, "../renderer", pathName);
       const fileExist = await pathExists(filePath);
       if (!fileExist) {
-        // 如果没有找到文件，直接返回 index.html ， react history 模式
+        // If the file is not found, return index.html directly, react history mode
         filePath = join(__dirname, "../renderer/index.html");
       }
       const mimeType = mime.lookup(filePath);
@@ -26,5 +26,15 @@ export default class ProtocolService {
         headers: { "Content-Type": mimeType || "text/html" },
       });
     });
+
+    if (process.defaultApp) {
+      if (process.argv.length >= 2) {
+        app.setAsDefaultProtocolClient(defaultScheme, process.execPath, [
+          path.resolve(process.argv[1]),
+        ]);
+      }
+    } else {
+      app.setAsDefaultProtocolClient(defaultScheme);
+    }
   }
 }

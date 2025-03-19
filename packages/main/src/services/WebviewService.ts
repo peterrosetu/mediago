@@ -10,7 +10,7 @@ import {
   pcUA,
   pluginPath,
 } from "../helper/index.ts";
-import { ElectronBlocker } from "@cliqz/adblocker-electron";
+import { ElectronBlocker } from "@ghostery/adblocker-electron";
 import ElectronLogger from "../vendor/ElectronLogger.ts";
 import ElectronStore from "../vendor/ElectronStore.ts";
 import MainWindow from "../windows/MainWindow.ts";
@@ -19,12 +19,15 @@ import VideoRepository from "../repository/VideoRepository.ts";
 import { SniffingHelper, SourceParams } from "./SniffingHelperService.ts";
 import { resolve } from "path";
 import { readFileSync } from "fs-extra";
+import { isDeeplink } from "../helper/utils.ts";
+import i18n from "../i18n/index.ts";
 
 @injectable()
 export default class WebviewService {
   private view: WebContentsView | null = null;
   private blocker?: ElectronBlocker;
   private defaultSession: string;
+  private viewShow = false;
 
   constructor(
     @inject(TYPES.MainWindow)
@@ -38,9 +41,9 @@ export default class WebviewService {
     @inject(TYPES.VideoRepository)
     private readonly videoRepository: VideoRepository,
     @inject(TYPES.SniffingHelper)
-    private readonly sniffingHelper: SniffingHelper
+    private readonly sniffingHelper: SniffingHelper,
   ) {
-    // 初始化 blocker
+    // Initialize the blocker
     this.initBlocker();
 
     const { useProxy, proxy, privacy } = this.store.store;
@@ -59,18 +62,29 @@ export default class WebviewService {
         preload: resolve(__dirname, "./preload.js"),
       },
     });
-    this.view.setBackgroundColor("#fff");
-    this.view.webContents.setAudioMuted(true);
 
-    const { isMobile } = this.store.store;
+    if (isDev) {
+      this.view.webContents.openDevTools();
+    }
+
+    this.view.setBackgroundColor("#fff");
+    const { isMobile, audioMuted } = this.store.store;
+    this.setAudioMuted(audioMuted);
     this.setUserAgent(isMobile);
 
     this.view.webContents.on("dom-ready", this.onDomReady);
     this.view.webContents.on("did-navigate", this.onDidNavigate);
     this.view.webContents.on("did-fail-load", this.onDidFailLoad);
     this.view.webContents.on("did-navigate-in-page", this.onDidNavigateInPage);
+    this.view.webContents.on("will-navigate", this.onWillNavigate);
     this.view.webContents.setWindowOpenHandler(this.onOpenNewWindow);
   }
+
+  onWillNavigate = (e: Event, url: string) => {
+    if (isDeeplink(url)) {
+      e.preventDefault();
+    }
+  };
 
   onDomReady = () => {
     if (!this.view) return;
@@ -82,7 +96,7 @@ export default class WebviewService {
   onDidNavigate = async () => {
     if (!this.view) return;
     const pageInfo = this.getPageInfo();
-    this.sniffingHelper.reset(pageInfo);
+    this.sniffingHelper.update(pageInfo);
     this.window.webContents.send("webview-did-navigate", pageInfo);
 
     try {
@@ -97,10 +111,13 @@ export default class WebviewService {
     } catch (err) {
       // empty
     }
+
+    this.sniffingHelper.checkPageInfo();
   };
 
   onDidFailLoad = (e: Event, code: number, desc: string) => {
-    this.window.webContents.send("webview-fail-load", { code, desc });
+    // this.window.webContents.send("webview-fail-load", { code, desc });
+    this.logger.error(`[Webview] fail load: ${code} ${desc}`);
   };
 
   onDidNavigateInPage = () => {
@@ -118,10 +135,11 @@ export default class WebviewService {
 
   onSource = async (item: SourceParams) => {
     if (!this.view) return;
-    // 这里需要判断是否使用浏览器插件
+    // Here you need to determine whether to use a browser plug-in
     const useExtension = this.store.get("useExtension");
     if (useExtension) {
-      this.view.webContents.send("webview-link-message", item);
+      // this.view.webContents.send("webview-link-message", item);
+      this.window.webContents.send("webview-link-message", item);
     } else {
       const video = await this.videoRepository.findVideoByName(item.name);
       if (video) {
@@ -130,14 +148,14 @@ export default class WebviewService {
       const res = await this.videoRepository.addVideo(item);
       const mainWebContents = this.mainWindow.window?.webContents;
       if (!mainWebContents) return;
-      // 这里向页面发送消息，通知页面更新
+      // This sends a message to the page notifying it of the update
       mainWebContents.send("download-item-notifier", res);
     }
   };
 
   getPageInfo() {
     if (!this.view) {
-      throw new Error("未找到 view");
+      throw new Error(i18n.t("browserViewNotFound"));
     }
     return {
       title: this.view.webContents.getTitle(),
@@ -147,7 +165,7 @@ export default class WebviewService {
 
   getBounds(): Electron.Rectangle {
     if (!this.view) {
-      throw new Error("未找到 view");
+      throw new Error(i18n.t("browserViewNotFound"));
     }
     return this.view.getBounds();
   }
@@ -165,30 +183,32 @@ export default class WebviewService {
   show() {
     if (!this.view) return;
     this.window.contentView.addChildView(this.view);
+    this.viewShow = true;
   }
 
   hide() {
     if (!this.view) return;
     this.window.contentView.removeChildView(this.view);
+    this.viewShow = false;
   }
 
   loadURL(url: string) {
-    // 开始加载 url
+    // Start loading url
     if (!this.view) {
       this.init();
     }
     if (!this.view) return;
 
-    // 1. 停止当前导航
+    // 1. Stop current navigation
     this.view.webContents.stop();
 
-    // 2. 加载新的 url
+    // 2. Load a new url
     this.view.webContents.loadURL(url);
   }
 
   async goBack() {
     if (!this.view) {
-      throw new Error("未找到 view");
+      throw new Error(i18n.t("browserViewNotFound"));
     }
     const { webContents } = this.view;
     if (webContents.canGoBack()) {
@@ -202,14 +222,14 @@ export default class WebviewService {
 
   async reload() {
     if (!this.view) {
-      throw new Error("未找到 view");
+      throw new Error(i18n.t("browserViewNotFound"));
     }
     this.view.webContents.reload();
   }
 
   async goHome() {
     if (!this.view) {
-      throw new Error("未找到 view");
+      throw new Error(i18n.t("browserViewNotFound"));
     }
     this.view.webContents.stop();
     this.view.webContents.clearHistory();
@@ -219,7 +239,7 @@ export default class WebviewService {
   get window() {
     if (this.browserWindow.window) return this.browserWindow.window;
     if (this.mainWindow.window) return this.mainWindow.window;
-    throw new Error("未找到当前窗口");
+    throw new Error(i18n.t("currentWindowNotFound"));
   }
 
   private get session() {
@@ -228,22 +248,22 @@ export default class WebviewService {
 
   private enableProxy(proxy: string) {
     if (!proxy) {
-      this.logger.error("[Proxy] 代理地址不能为空");
+      this.logger.error(`[Proxy] proxy address is empty`);
       return;
     }
 
-    // 处理 proxy 地址的合法性
+    // Process the validity of the proxy address
     if (!/https?:\/\//.test(proxy)) {
       proxy = `http://${proxy}`;
     }
 
     this.session.setProxy({ proxyRules: proxy });
-    this.logger.info(`[Proxy] 代理开启（${proxy}）`);
+    this.logger.info(`[Proxy] enable proxy: ${proxy}`);
   }
 
   private disableProxy() {
     this.session.setProxy({ proxyRules: "" });
-    this.logger.info("[Proxy] 代理关闭");
+    this.logger.info(`[Proxy] disable proxy`);
   }
 
   setProxy(useProxy: boolean, proxy: string): void {
@@ -271,23 +291,32 @@ export default class WebviewService {
 
   private enableBlocking() {
     if (!this.blocker) {
-      this.logger.error("[AdBlocker] 开启失败（未初始化）");
+      this.logger.error(`[AdBlocker] enable failed(not initialized)`);
+      return;
+    }
+    if (this.blocker.isBlockingEnabled(this.session)) {
       return;
     }
     this.blocker.enableBlockingInSession(this.session);
-    this.logger.info("[AdBlocker] 开启");
+    this.logger.info(`[AdBlocker] enable`);
   }
 
   private disableBlocking() {
     if (!this.blocker) {
-      this.logger.error("[AdBlocker] 关闭失败（未初始化）");
+      this.logger.error(`[AdBlocker] disable failed(not initialized)`);
       return;
     }
     if (!this.blocker.isBlockingEnabled(this.session)) {
       return;
     }
     this.blocker.disableBlockingInSession(this.session);
-    this.logger.info("[AdBlocker] 关闭");
+    this.logger.info(`[AdBlocker] disable`);
+  }
+
+  setAudioMuted(audioMuted?: boolean) {
+    if (!this.view) return;
+    this.view.webContents.setAudioMuted(audioMuted ? true : false);
+    this.logger.info(`Play audio: ${!audioMuted}`);
   }
 
   setUserAgent(isMobile?: boolean) {
@@ -297,12 +326,15 @@ export default class WebviewService {
     } else {
       this.view.webContents.setUserAgent(pcUA);
     }
-    this.logger.info(`[UA] 设置为${isMobile ? "移动端" : " pc 端"}`);
+    this.logger.info(`[UA] User-Agent: ${isMobile ? "mobile" : "PC"}`);
   }
 
-  captureView(): Promise<Electron.NativeImage> {
+  async captureView(): Promise<Electron.NativeImage | null> {
     if (!this.view) {
-      throw new Error("未找到 view");
+      throw new Error(i18n.t("browserViewNotFound"));
+    }
+    if (!this.viewShow) {
+      return null;
     }
     return this.view.webContents.capturePage();
   }
@@ -316,7 +348,7 @@ export default class WebviewService {
       this.view.webContents.close();
       this.window.contentView.removeChildView(this.view);
     }
-    // FIXME: 为了避免内存泄漏，这里需要销毁 view
+    // FIXME: To avoid memory leaks, the view needs to be destroyed here
     this.view = null;
   }
 
@@ -326,7 +358,7 @@ export default class WebviewService {
   }
 
   setDefaultSession(isPrivacy = false, init = false) {
-    this.logger.info(`[Session] ${isPrivacy ? "隐私" : "正常"}模式`);
+    this.logger.info(`[Session] ${isPrivacy ? "Privacy" : "Persist"} Mode`);
     if (isPrivacy) {
       this.defaultSession = PRIVACY_WEBVIEW;
     } else {

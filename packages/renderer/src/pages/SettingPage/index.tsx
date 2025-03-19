@@ -1,28 +1,62 @@
-import React, { useEffect, useRef } from "react";
-import PageContainer from "../../components/PageContainer";
+import React, { PropsWithChildren, useEffect, useRef, useState } from "react";
+import PageContainer from "@/components/PageContainer";
 import {
-  ProForm,
-  ProFormText,
-  ProFormGroup,
-  ProFormSwitch,
-  ProFormSelect,
-  ProFormDigit,
-} from "@ant-design/pro-components";
-import "./index.scss";
-import { Button, FormInstance, message, Space, Tooltip } from "antd";
+  App,
+  Badge,
+  Button,
+  Dropdown,
+  Form,
+  FormInstance,
+  Input,
+  InputNumber,
+  MenuProps,
+  Modal,
+  Progress,
+  Radio,
+  Select,
+  Space,
+  Switch,
+} from "antd";
 import {
   ClearOutlined,
+  DownloadOutlined,
   FolderOpenOutlined,
-  QuestionCircleOutlined,
+  UploadOutlined,
 } from "@ant-design/icons";
-import { selectAppStore, setAppStore } from "../../store";
-import { useDispatch, useSelector } from "react-redux";
-import useElectron from "../../hooks/electron";
-import { useRequest } from "ahooks";
-import { AppLanguage, AppTheme } from "../../types";
+import {
+  useAppStore,
+  appStoreSelector,
+  setAppStoreSelector,
+} from "@/store/app";
+import useElectron from "@/hooks/useElectron";
+import { useMemoizedFn, useRequest } from "ahooks";
+import { AppLanguage, AppTheme } from "@/types";
 import { useTranslation } from "react-i18next";
+import { updateSelector, useSessionStore } from "@/store/session";
+import { useShallow } from "zustand/react/shallow";
+import { isWeb, tdApp } from "@/utils";
+import { CHECK_UPDATE } from "@/const";
 
 const version = import.meta.env.APP_VERSION;
+
+interface GroupWrapperProps extends PropsWithChildren {
+  title: string;
+  hidden?: boolean;
+}
+
+function GroupWrapper({ children, title, hidden }: GroupWrapperProps) {
+  if (hidden) return null;
+
+  return (
+    <div className="rounded-lg bg-white px-3 py-2 dark:bg-[#1F2024]">
+      <div className="mb-5 flex flex-row items-center gap-2">
+        <div className="h-4 w-1 rounded-full bg-[#127AF3]" />
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
 
 const SettingPage: React.FC = () => {
   const {
@@ -31,125 +65,235 @@ const SettingPage: React.FC = () => {
     getEnvPath,
     openDir,
     clearWebviewCache,
+    exportFavorites,
+    importFavorites,
+    checkUpdate,
+    startUpdate,
+    addIpcListener,
+    removeIpcListener,
+    installUpdate,
   } = useElectron();
-  const dispatch = useDispatch();
   const { t } = useTranslation();
   const formRef = useRef<FormInstance<AppStore>>();
-  const settings = useSelector(selectAppStore);
+  const settings = useAppStore(useShallow(appStoreSelector));
+  const { setAppStore } = useAppStore(useShallow(setAppStoreSelector));
   const { data: envPath } = useRequest(getEnvPath);
-  const [messageApi, contextHolder] = message.useMessage();
+  const { message } = App.useApp();
+  const { updateAvailable, updateChecking } = useSessionStore(
+    useShallow(updateSelector),
+  );
+  const [openUpdateModal, setOpenUpdateModal] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [updateDownloaded, setUpdateDownloaded] = useState(false);
 
   useEffect(() => {
     formRef.current?.setFieldsValue(settings);
   }, [settings]);
 
-  const onSelectDir = async () => {
+  const onSelectDir = useMemoizedFn(async () => {
     const local = await onSelectDownloadDir();
     if (local) {
-      dispatch(setAppStore({ local }));
+      setAppStore({ local });
       formRef.current?.setFieldValue("local", local);
     }
-  };
+  });
 
-  const renderButtonLabel = () => {
+  const renderButtonLabel = useMemoizedFn(() => {
+    if (isWeb) {
+      return t("localDir");
+    }
+
     return (
       <Button onClick={onSelectDir} icon={<FolderOpenOutlined />}>
         {t("selectFolder")}
       </Button>
     );
-  };
+  });
 
-  const renderTooltipLabel = (label: string, tooltip: string) => {
-    return (
-      <div className="item-label">
-        <div className="item-label-text">{label}</div>
-        <Tooltip title={tooltip} placement={"right"}>
-          <QuestionCircleOutlined />
-        </Tooltip>
-      </div>
-    );
-  };
-
-  const onFormValueChange = async (values: Partial<AppStore>) => {
+  const onFormValueChange = useMemoizedFn(async (values: Partial<AppStore>) => {
     try {
       for (const key of Object.keys(values)) {
         if (values[key] != null) {
           await ipcSetAppStore(key, values[key]);
         }
       }
-      dispatch(setAppStore(values));
+      setAppStore(values);
     } catch (e: any) {
-      messageApi.error(e.message);
+      message.error(e.message);
     }
-  };
+  });
+
+  const items = [
+    {
+      key: "1",
+      label: (
+        <Space>
+          <UploadOutlined />
+          {t("importFavorite")}
+        </Space>
+      ),
+    },
+  ];
+
+  const onMenuClick: MenuProps["onClick"] = useMemoizedFn(async (e) => {
+    const { key } = e;
+    if (key === "1") {
+      try {
+        await importFavorites();
+        message.success(t("importFavoriteSuccess"));
+      } catch (e: any) {
+        message.error(t("importFavoriteFailed"));
+      }
+    }
+  });
+
+  const handleExportFavorite = useMemoizedFn(async () => {
+    try {
+      await exportFavorites();
+      message.success(t("exportFavoriteSuccess"));
+    } catch (e: any) {
+      message.error(t("exportFavoriteFailed"));
+    }
+  });
+
+  const handleCheckUpdate = useMemoizedFn(async () => {
+    tdApp.onEvent(CHECK_UPDATE);
+    setOpenUpdateModal(true);
+    await checkUpdate();
+  });
+
+  const handleHiddenUpdateModal = useMemoizedFn(() => {
+    setOpenUpdateModal(false);
+  });
+
+  const handleUpdate = useMemoizedFn(() => {
+    startUpdate();
+  });
+
+  const handleInstallUpdate = useMemoizedFn(() => {
+    installUpdate();
+  });
+
+  useEffect(() => {
+    const onDownloadProgress = (event: any, progress: any) => {
+      setDownloadProgress(progress.percent);
+    };
+    const onDownloaded = () => {
+      setUpdateDownloaded(true);
+    };
+    addIpcListener("updateDownloadProgress", onDownloadProgress);
+    addIpcListener("updateDownloaded", onDownloaded);
+
+    return () => {
+      removeIpcListener("updateDownloadProgress", onDownloadProgress);
+      removeIpcListener("updateDownloaded", onDownloaded);
+    };
+  }, []);
+
+  const handleClearWebviewCache = useMemoizedFn(async () => {
+    try {
+      await clearWebviewCache();
+      message.success(t("clearCacheSuccess"));
+    } catch (err: any) {
+      message.error(t("clearCacheFailed"));
+    }
+  });
 
   return (
     <PageContainer title={t("setting")}>
-      <ProForm<AppStore>
-        className={"setting-form-inner"}
-        formRef={formRef}
+      <Form<AppStore>
+        ref={formRef}
         layout="horizontal"
-        submitter={false}
-        labelCol={{ style: { width: "140px" } }}
         labelAlign={"left"}
         colon={false}
         initialValues={settings}
         onValuesChange={onFormValueChange}
+        className="flex flex-col gap-2"
+        labelCol={{ span: 5 }}
+        wrapperCol={{ span: 10 }}
       >
-        {contextHolder}
-        <ProFormGroup title={t("basicSetting")} direction={"vertical"}>
-          <ProFormText
-            width="xl"
-            disabled
-            name="local"
-            placeholder={t("pleaseSelectDownloadDir")}
-            label={renderButtonLabel()}
-          />
-          <ProFormSelect
-            name="theme"
-            label={t("downloaderTheme")}
-            valueEnum={{
-              [AppTheme.System]: t("followSystem"),
-              [AppTheme.Dark]: t("dark"),
-              [AppTheme.Light]: t("light"),
-            }}
-            placeholder={t("pleaseSelectTheme")}
-            allowClear={false}
-          />
-          <ProFormSelect
-            name="language"
-            label={t("displayLanguage")}
-            valueEnum={{
-              [AppLanguage.System]: t("followSystem"),
-              [AppLanguage.ZH]: t("chinese"),
-              [AppLanguage.EN]: t("english"),
-            }}
-            placeholder={t("pleaseSelectLanguage")}
-            allowClear={false}
-          />
-          <ProFormSwitch label={t("openInNewWindow")} name="openInNewWindow" />
-          <ProFormSwitch label={t("downloadPrompt")} name="promptTone" />
-          <ProFormSwitch label={t("showTerminal")} name="showTerminal" />
-          <ProFormSwitch
-            label={renderTooltipLabel(
-              t("autoUpgrade"),
-              t("autoUpgradeTooltip")
-            )}
+        <GroupWrapper title={t("basicSetting")}>
+          <Form.Item name="local" label={renderButtonLabel()}>
+            <Input
+              width="xl"
+              disabled
+              placeholder={t("pleaseSelectDownloadDir")}
+            />
+          </Form.Item>
+          <Form.Item hidden={isWeb} name="theme" label={t("downloaderTheme")}>
+            <Select
+              options={[
+                { label: t("followSystem"), value: AppTheme.System },
+                { label: t("dark"), value: AppTheme.Dark },
+                { label: t("light"), value: AppTheme.Light },
+              ]}
+              placeholder={t("pleaseSelectTheme")}
+              allowClear={false}
+            />
+          </Form.Item>
+          <Form.Item name="language" label={t("displayLanguage")}>
+            <Select
+              options={[
+                { label: t("followSystem"), value: AppLanguage.System },
+                { label: t("chinese"), value: AppLanguage.ZH },
+                { label: t("english"), value: AppLanguage.EN },
+              ]}
+              placeholder={t("pleaseSelectLanguage")}
+              allowClear={false}
+            />
+          </Form.Item>
+          <Form.Item
+            hidden={isWeb}
+            label={t("downloadPrompt")}
+            name="promptTone"
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            hidden={isWeb}
+            label={t("showTerminal")}
+            name="showTerminal"
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            hidden={isWeb}
+            label={t("autoUpgrade")}
+            tooltip={t("autoUpgradeTooltip")}
             name="autoUpgrade"
-          />
-          <ProFormSwitch
-            label={renderTooltipLabel(t("privacy"), t("privacyTooltip"))}
-            name="privacy"
-          />
-        </ProFormGroup>
-        <ProFormGroup title={t("browserSetting")} direction={"vertical"}>
-          <ProFormText
-            width="xl"
-            name="proxy"
-            placeholder={t("pleaseEnterProxy")}
-            label={t("proxySetting")}
-          />
-          <ProFormSwitch
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            hidden={isWeb}
+            label={t("allowBetaVersion")}
+            name="allowBeta"
+          >
+            <Switch />
+          </Form.Item>
+
+          <Form.Item
+            hidden={isWeb}
+            label={t("closeMainWindow")}
+            name="closeMainWindow"
+          >
+            <Radio.Group>
+              <Radio value={true}>{t("close")}</Radio>
+              <Radio value={false}>{t("minimizeToTray")}</Radio>
+            </Radio.Group>
+          </Form.Item>
+        </GroupWrapper>
+        <GroupWrapper hidden={isWeb} title={t("browserSetting")}>
+          <Form.Item label={t("audioMuted")} name="audioMuted">
+            <Switch />
+          </Form.Item>
+          <Form.Item label={t("openInNewWindow")} name="openInNewWindow">
+            <Switch />
+          </Form.Item>
+          <Form.Item name="proxy" label={t("proxySetting")}>
+            <Input width="xl" placeholder={t("pleaseEnterProxy")} />
+          </Form.Item>
+          <Form.Item
             name="useProxy"
             label={t("proxySwitch")}
             rules={[
@@ -162,36 +306,52 @@ const SettingPage: React.FC = () => {
                 },
               },
             ]}
-          />
-          <ProFormSwitch label={t("blockAds")} name="blockAds" />
-          <ProFormSwitch label={t("enterMobileMode")} name="isMobile" />
-          <ProFormSwitch
-            label={renderTooltipLabel(
-              t("useImmersiveSniffing"),
-              t("immersiveSniffingDescription")
-            )}
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item label={t("blockAds")} name="blockAds">
+            <Switch />
+          </Form.Item>
+          <Form.Item label={t("enterMobileMode")} name="isMobile">
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            label={t("useImmersiveSniffing")}
+            tooltip={t("immersiveSniffingDescription")}
             name="useExtension"
-          />
-          <ProFormText label={t("moreAction")}>
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            label={t("privacy")}
+            tooltip={t("privacyTooltip")}
+            name="privacy"
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item label={t("moreAction")}>
             <Space>
               <Button
-                onClick={async () => {
-                  try {
-                    await clearWebviewCache();
-                    messageApi.success(t("clearCacheSuccess"));
-                  } catch (err) {
-                    messageApi.error(t("clearCacheFailed"));
-                  }
-                }}
+                onClick={handleClearWebviewCache}
                 icon={<ClearOutlined />}
               >
                 {t("clearCache")}
               </Button>
+              <Dropdown.Button
+                menu={{ items, onClick: onMenuClick }}
+                onClick={handleExportFavorite}
+              >
+                <DownloadOutlined />
+                {t("exportFavorite")}
+              </Dropdown.Button>
             </Space>
-          </ProFormText>
-        </ProFormGroup>
-        <ProFormGroup title={t("downloadSetting")} direction={"vertical"}>
-          <ProFormSwitch
+          </Form.Item>
+        </GroupWrapper>
+        <GroupWrapper title={t("downloadSetting")}>
+          <Form.Item hidden={!isWeb} name="proxy" label={t("proxySetting")}>
+            <Input placeholder={t("pleaseEnterProxy")} />
+          </Form.Item>
+          <Form.Item
             name="downloadProxySwitch"
             label={t("downloadProxySwitch")}
             rules={[
@@ -204,19 +364,20 @@ const SettingPage: React.FC = () => {
                 },
               },
             ]}
-          />
-          <ProFormSwitch label={t("deleteSegments")} name="deleteSegments" />
-          <ProFormDigit
-            label={renderTooltipLabel(
-              t("maxRunner"),
-              t("maxRunnerDescription")
-            )}
+          >
+            <Switch />
+          </Form.Item>
+          <Form.Item label={t("deleteSegments")} name="deleteSegments">
+            <Switch />
+          </Form.Item>
+          <Form.Item
+            label={t("maxRunner")}
+            tooltip={t("maxRunnerDescription")}
             name="maxRunner"
-            min={1}
-            max={50}
-            fieldProps={{ precision: 0 }}
-          />
-          <ProFormText label={t("moreAction")}>
+          >
+            <InputNumber min={1} max={50} precision={0} />
+          </Form.Item>
+          <Form.Item hidden={isWeb} label={t("moreAction")}>
             <Space>
               <Button
                 onClick={() => openDir(envPath.workspace)}
@@ -237,12 +398,72 @@ const SettingPage: React.FC = () => {
                 {t("localDir")}
               </Button>
             </Space>
-          </ProFormText>
-          <ProFormText label={t("currentVersion")}>
-            <div>{version}</div>
-          </ProFormText>
-        </ProFormGroup>
-      </ProForm>
+          </Form.Item>
+          <Form.Item label={t("currentVersion")}>
+            <Space>
+              <div>{version}</div>
+              {!isWeb && (
+                <Badge dot={updateAvailable}>
+                  <Button type="text" onClick={handleCheckUpdate}>
+                    {t("checkUpdate")}
+                  </Button>
+                </Badge>
+              )}
+            </Space>
+          </Form.Item>
+        </GroupWrapper>
+        <GroupWrapper title={t("dockerSetting")}>
+          <Form.Item hidden={isWeb} name="dockerUrl" label={t("dockerUrl")}>
+            <Input placeholder={t("pleaseEnterDockerUrl")} />
+          </Form.Item>
+          <Form.Item label={t("enableDocker")} name="enableDocker">
+            <Switch />
+          </Form.Item>
+        </GroupWrapper>
+      </Form>
+
+      <Modal
+        title={t("updateModal")}
+        open={openUpdateModal}
+        onCancel={handleHiddenUpdateModal}
+        footer={
+          updateAvailable
+            ? [
+                <Button key="hidden" onClick={handleHiddenUpdateModal}>
+                  {t("close")}
+                </Button>,
+                updateDownloaded ? (
+                  <Button
+                    key="install"
+                    type="primary"
+                    onClick={handleInstallUpdate}
+                  >
+                    {t("install")}
+                  </Button>
+                ) : (
+                  <Button key="update" type="primary" onClick={handleUpdate}>
+                    {t("update")}
+                  </Button>
+                ),
+              ]
+            : [
+                <Button key="hidden" onClick={handleHiddenUpdateModal}>
+                  {t("close")}
+                </Button>,
+              ]
+        }
+      >
+        <div className="flex min-h-28 flex-col justify-center">
+          {updateChecking
+            ? t("checkingForUpdates")
+            : updateAvailable
+              ? t("updateAvailable")
+              : t("updateNotAvailable")}
+          {!updateChecking && updateAvailable && (
+            <Progress percent={updateDownloaded ? 100 : downloadProgress} />
+          )}
+        </div>
+      </Modal>
     </PageContainer>
   );
 };

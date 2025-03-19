@@ -10,11 +10,13 @@ import ElectronLogger from "../vendor/ElectronLogger.ts";
 import DownloadService from "../services/DownloadService.ts";
 import ElectronStore from "../vendor/ElectronStore.ts";
 import VideoRepository from "../repository/VideoRepository.ts";
-import { isWin } from "../helper/index.ts";
+import i18n from "../i18n/index.ts";
+import { isWin } from "../helper/variables.ts";
 
 @injectable()
 export default class MainWindow extends Window {
   url = isDev ? "http://localhost:8555/" : "mediago://index.html/";
+  private initialUrl: string | null = null;
   constructor(
     @inject(TYPES.ElectronLogger)
     private readonly logger: ElectronLogger,
@@ -23,7 +25,7 @@ export default class MainWindow extends Window {
     @inject(TYPES.VideoRepository)
     private readonly videoRepository: VideoRepository,
     @inject(TYPES.ElectronStore)
-    private readonly store: ElectronStore,
+    private readonly store: ElectronStore
   ) {
     super({
       width: 1100,
@@ -45,8 +47,14 @@ export default class MainWindow extends Window {
     this.downloadService.on("download-stop", this.onDownloadStop);
     this.downloadService.on("download-message", this.receiveMessage);
     this.store.onDidAnyChange(this.storeChange);
-    app.on("second-instance", this.secondInstance);
   }
+
+  closeMainWindow = () => {
+    const { closeMainWindow } = this.store.store;
+    if (closeMainWindow) {
+      app.quit();
+    }
+  };
 
   onDownloadReadyStart = async ({ id, isLive }: DownloadProgress) => {
     if (isLive) {
@@ -57,7 +65,7 @@ export default class MainWindow extends Window {
 
   init(): void {
     if (this.window) {
-      // 如果窗口已经存在，则直接显示
+      // If the window already exists, it is displayed directly
       this.window.show();
       return;
     }
@@ -71,8 +79,35 @@ export default class MainWindow extends Window {
       this.window.setBounds(mainBounds);
     }
 
-    // 处理当前窗口改变大小
+    // Handle current window resize
     this.window.on("resized", this.handleResize);
+    this.window.on("close", this.closeMainWindow);
+    // if (process.defaultApp) {
+    //   // dev
+    //   if (process.argv.length >= 2) {
+    //     const urlArg = process.argv.find((arg) => arg.startsWith("mediago://"));
+    //     if (urlArg) {
+    //       this.initialUrl = urlArg;
+    //     }
+    //   }
+    // } else {
+    //   // prod
+    //   if (process.argv.length >= 2) {
+    //     const urlArg = process.argv[1];
+    //     if (urlArg.startsWith("mediago://")) {
+    //       this.initialUrl = urlArg;
+    //     }
+    //   }
+    // }
+    // this.window.webContents.on("did-finish-load", () => {
+    //   if (this.initialUrl) {
+    //     this.send("url-params", this.initialUrl);
+    //   }
+    // });
+
+    // if (this.initialUrl) {
+    //   this.window.webContents.send("url-params", this.initialUrl);
+    // }
   }
 
   handleResize = () => {
@@ -82,24 +117,8 @@ export default class MainWindow extends Window {
     this.store.set("mainBounds", _.omit(bounds, ["x", "y"]));
   };
 
-  secondInstance = () => {
-    if (!this.window) return;
-    if (isWin) {
-      if (this.window) {
-        if (this.window.isMinimized()) {
-          this.window.restore();
-        }
-        if (this.window.isVisible()) {
-          this.window.focus();
-        } else {
-          this.window.show();
-        }
-      }
-    }
-  };
-
   storeChange = (store: unknown) => {
-    // 向所有窗口发送通知
+    // Send notifications to all Windows
     this.send("store-change", store);
   };
 
@@ -113,8 +132,10 @@ export default class MainWindow extends Window {
       const video = await this.videoRepository.findVideo(id);
 
       new Notification({
-        title: "下载成功",
-        body: `${video.name} 下载成功`,
+        title: i18n.t("downloadSuccess"),
+        body: i18n.t("videoDownloadSuccess", {
+          name: video.name,
+        }),
       }).show();
     }
 
@@ -127,11 +148,11 @@ export default class MainWindow extends Window {
       const video = await this.videoRepository.findVideo(id);
 
       new Notification({
-        title: "下载失败",
-        body: `${video.name} 下载失败`,
+        title: i18n.t("downloadFailed"),
+        body: i18n.t("videoDownloadFailed", { name: video.name }),
       }).show();
     }
-    this.logger.error("下载失败：", err);
+    this.logger.error("download failed: ", err);
     this.send("download-failed", id);
   };
 
@@ -144,7 +165,7 @@ export default class MainWindow extends Window {
   };
 
   receiveMessage = async (id: number, message: string) => {
-    // 将日志写入数据库中
+    // Write the log to the database
     await this.videoRepository.appendDownloadLog(id, message);
     const showTerminal = this.store.get("showTerminal");
     if (showTerminal) {
@@ -156,5 +177,53 @@ export default class MainWindow extends Window {
     if (!this.window) return;
 
     this.window.webContents.send(channel, ...args);
+    // if (!this.window) {
+    //   this.init(); // If the window is closed, reinitialize the window
+    // }
+
+    // if (this.window) {
+    //   this.window.webContents.send(channel, ...args); // Send message to renderer process
+    // }
+  }
+
+  showWindow(url?: string) {
+    if (isWin) {
+      if (this.window) {
+        if (this.window.isMinimized()) {
+          this.window.restore();
+        }
+        if (this.window.isVisible()) {
+          this.window.focus();
+        } else {
+          this.window.show();
+        }
+      } else {
+        this.init();
+      }
+
+      if (url) {
+        this.window!.loadURL(url);
+      }
+    }
+  }
+
+  // Handle URL in the form of mediago://
+  handleUrl(url: string) {
+    if (!this.window) {
+      this.init();
+    }
+
+    if (this.window) {
+      if (this.window.isMinimized()) {
+        this.window.restore();
+      }
+      this.window.focus();
+    }
+
+    this.send("url-params", url); // Send the URL to the renderer process
+
+    if (url) {
+      this.window!.loadURL(url);
+    }
   }
 }

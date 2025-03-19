@@ -9,6 +9,7 @@ import pkg from "../app/package.json";
 import * as builder from "electron-builder";
 import { globSync } from "glob";
 import fs from "fs";
+import { exec } from "child_process";
 
 const env = Env.getInstance();
 env.loadDotEnvRuntime();
@@ -17,8 +18,23 @@ async function clean() {
   return deleteSync([
     mainResolve("app/build"),
     mainResolve("app/bin"),
+    mainResolve("app/mobile"),
+    mainResolve("app/plugin"),
     mainResolve("release"),
   ]);
+}
+
+function compileTypescript() {
+  exec("npx tsc", (error, stdout, stderr) => {
+    if (error) {
+      console.error(`Error: ${error.message}`);
+      return;
+    }
+    if (stderr) {
+      console.error(`Stderr: ${stderr}`);
+      return;
+    }
+  });
 }
 
 async function copySqlite() {
@@ -29,13 +45,13 @@ async function copySqlite() {
 }
 
 async function copyBin() {
-  const source = mainResolve("bin", process.platform);
+  const source = mainResolve("bin", process.platform, process.arch);
   const target = mainResolve("app/bin");
   fs.cpSync(source, target, { recursive: true });
 }
 
 async function chmodBin() {
-  // 遍历文件夹下的所有文件，将文件的权限设置为 777
+  // Go through all the files in the folder and set the permissions on the files to 777
   if (isWin) return;
 
   const files = globSync(mainResolve("app/bin/*"));
@@ -44,7 +60,14 @@ async function chmodBin() {
   }
 }
 
-const copy = gulp.parallel(copyBin, copySqlite);
+async function copyUpdateConfig() {
+  const source = mainResolve("dev-app-update.yml");
+  const target = mainResolve("app/build/main/dev-app-update.yml");
+  fs.cpSync(source, target, { recursive: true });
+}
+
+const devCopy = gulp.parallel(copyBin, copySqlite, copyUpdateConfig);
+const buildCopy = gulp.parallel(copySqlite);
 
 async function watchTask() {
   const app = new ElectronApp();
@@ -59,6 +82,8 @@ async function watchTask() {
       app.start();
     })
     .on("change", async () => {
+      compileTypescript();
+
       await main.rebuild();
       await preload.rebuild();
       app.restart();
@@ -90,9 +115,9 @@ async function pack() {
   await builder.build({ config });
 }
 
-// 开发环境
-export const dev = gulp.series(clean, copy, chmodBin, watchTask);
-// 构建打包
-export const build = gulp.series(clean, copy, chmodBin, buildTask);
+// Development environment
+export const dev = gulp.series(devCopy, chmodBin, watchTask);
+// Build packaging
+export const build = gulp.series(clean, buildCopy, chmodBin, buildTask);
 // release
 export const release = gulp.series(pack);

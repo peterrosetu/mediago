@@ -9,12 +9,17 @@ import {
   clipboard,
 } from "electron";
 import { Favorite } from "../entity/Favorite.ts";
-import { convertToAudio, db, workspace } from "../helper/index.ts";
+import {
+  convertToAudio,
+  db,
+  videoPattern,
+  workspace,
+} from "../helper/index.ts";
 import { inject, injectable } from "inversify";
 import { AppStore, EnvPath } from "../main.ts";
 import path from "path";
 import { handle, getLocalIP } from "../helper/index.ts";
-import { type Controller } from "../interfaces.ts";
+import { DownloadStatus, type Controller } from "../interfaces.ts";
 import { TYPES } from "../types.ts";
 import fs from "fs-extra";
 import MainWindow from "../windows/MainWindow.ts";
@@ -26,6 +31,11 @@ import VideoRepository from "../repository/VideoRepository.ts";
 import ConversionRepository from "../repository/ConversionRepository.ts";
 import { machineId } from "node-machine-id";
 import { nanoid } from "nanoid";
+import { glob } from "glob";
+import i18n from "../i18n/index.ts";
+import ElectronLogger from "../vendor/ElectronLogger.ts";
+import ElectronUpdater from "../vendor/ElectronUpdater.ts";
+import axios from "axios";
 
 @injectable()
 export default class HomeController implements Controller {
@@ -45,7 +55,11 @@ export default class HomeController implements Controller {
     @inject(TYPES.WebviewService)
     private readonly webviewService: WebviewService,
     @inject(TYPES.ConversionRepository)
-    private readonly conversionRepository: ConversionRepository
+    private readonly conversionRepository: ConversionRepository,
+    @inject(TYPES.ElectronLogger)
+    private readonly logger: ElectronLogger,
+    @inject(TYPES.ElectronUpdater)
+    private readonly updater: ElectronUpdater,
   ) {}
 
   @handle("get-env-path")
@@ -89,14 +103,14 @@ export default class HomeController implements Controller {
     };
     const template: Array<MenuItemConstructorOptions | MenuItem> = [
       {
-        label: "打开",
+        label: i18n.t("open"),
         click: () => {
           send("open");
         },
       },
       { type: "separator" },
       {
-        label: "删除",
+        label: i18n.t("delete"),
         click: () => {
           send("delete");
         },
@@ -110,7 +124,7 @@ export default class HomeController implements Controller {
   @handle("select-download-dir")
   async selectDownloadDir(): Promise<string> {
     const window = this.mainWindow.window;
-    if (!window) return Promise.reject("未找到主窗口");
+    if (!window) return Promise.reject(i18n.t("noMainWindow"));
 
     const result = await dialog.showOpenDialog(window, {
       properties: ["openDirectory"],
@@ -152,6 +166,18 @@ export default class HomeController implements Controller {
     if (key === "privacy") {
       this.webviewService.setDefaultSession(val);
     }
+    // language
+    if (key === "language") {
+      i18n.changeLanguage(val);
+    }
+    // allowBeta
+    if (key === "allowBeta") {
+      this.updater.changeAllowBeta(val);
+    }
+    // audio muted mode
+    if (key === "audioMuted") {
+      this.webviewService.setAudioMuted(val);
+    }
 
     this.store.set(key, val);
   }
@@ -177,37 +203,62 @@ export default class HomeController implements Controller {
     const item = await this.videoRepository.findVideo(id);
     const template: Array<MenuItemConstructorOptions | MenuItem> = [
       {
-        label: "拷贝链接地址",
+        label: i18n.t("copyLinkAddress"),
         click: () => {
           clipboard.writeText(item.url || "");
         },
       },
       {
-        label: "选择",
+        label: i18n.t("select"),
         click: () => {
           send("select");
         },
       },
       {
-        label: "下载",
+        label: i18n.t("download"),
         click: () => {
           send("download");
         },
       },
       {
-        label: "刷新",
+        label: i18n.t("refresh"),
         click: () => {
           send("refresh");
         },
       },
       { type: "separator" },
       {
-        label: "删除",
+        label: i18n.t("delete"),
         click: () => {
           send("delete");
         },
       },
     ];
+
+    if (item.status === DownloadStatus.Success) {
+      const local = this.store.get("local");
+      const pattern = path.join(local, `${item.name}.{${videoPattern}}`);
+      const files = await glob(pattern);
+      const exists = files.length > 0;
+      if (exists) {
+        const file = files[0];
+        template.unshift(
+          {
+            label: i18n.t("openFolder"),
+            click: () => {
+              shell.showItemInFolder(file);
+            },
+          },
+          {
+            label: i18n.t("openFile"),
+            click: () => {
+              shell.openPath(file);
+            },
+          },
+          { type: "separator" },
+        );
+      }
+    }
 
     const menu = Menu.buildFromTemplate(template);
     menu.popup();
@@ -225,7 +276,7 @@ export default class HomeController implements Controller {
     if (exist) {
       return await convertToAudio(input, output);
     } else {
-      return Promise.reject("未找到文件，可能是文件已经删除");
+      return Promise.reject(i18n.t("noFileFound"));
     }
   }
 
@@ -236,9 +287,9 @@ export default class HomeController implements Controller {
 
   @handle("combine-to-home-page")
   async combineToHomePage() {
-    // 关闭浏览器窗口
+    // Close browser window
     this.browserWindow.hideWindow();
-    // 修改设置中的属性
+    // Modify the properties in the Settings
     this.store.set("openInNewWindow", false);
   }
 
@@ -266,7 +317,7 @@ export default class HomeController implements Controller {
   @handle("select-file")
   async selectFile() {
     const window = this.mainWindow.window;
-    if (!window) return Promise.reject("未找到主窗口");
+    if (!window) return Promise.reject(i18n.t("noMainWindow"));
 
     const result = await dialog.showOpenDialog(window, {
       properties: ["openFile"],
@@ -292,6 +343,130 @@ export default class HomeController implements Controller {
       const newId = nanoid();
       this.store.set("machineId", newId);
       return newId;
+    }
+  }
+
+  @handle("export-favorites")
+  async exportFavorites() {
+    const favorites = await this.favoriteRepository.findFavorites();
+    const json = JSON.stringify(
+      favorites.map((i) => ({
+        title: i.title,
+        url: i.url,
+        icon: i.icon,
+      })),
+      null,
+      2,
+    );
+    const window = this.mainWindow.window;
+    if (!window) return Promise.reject(i18n.t("noMainWindow"));
+
+    const result = await dialog.showSaveDialog(window, {
+      title: i18n.t("exportFavorites"),
+      defaultPath: "favorites.json",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+
+    if (!result.canceled) {
+      await fs.writeFile(result.filePath, json);
+    }
+  }
+
+  @handle("import-favorites")
+  async importFavorites() {
+    const window = this.mainWindow.window;
+    if (!window) return Promise.reject(i18n.t("noMainWindow"));
+
+    const result = await dialog.showOpenDialog(window, {
+      properties: ["openFile"],
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+
+    if (!result.canceled) {
+      const filePath = result.filePaths[0];
+      const json = await fs.readJSON(filePath);
+      await this.favoriteRepository.importFavorites(json);
+    }
+  }
+
+  @handle("check-update")
+  async checkUpdate() {
+    this.updater.manualUpdate();
+  }
+
+  @handle("start-update")
+  async startUpdate() {
+    this.updater.startDownload();
+  }
+
+  @handle("install-update")
+  async installUpdate() {
+    this.updater.install();
+  }
+
+  @handle("export-download-list")
+  async exportDownloadList() {
+    const videos = await this.videoRepository.findAllVideos();
+
+    const txt = videos.map((video) => `${video.url} ${video.name}`).join("\n");
+    const window = this.mainWindow.window;
+    if (!window) return Promise.reject(i18n.t("noMainWindow"));
+
+    const result = await dialog.showSaveDialog(window, {
+      title: i18n.t("exportDownloadList"),
+      defaultPath: "download-list.txt",
+      filters: [{ name: "Text", extensions: ["txt"] }],
+    });
+
+    if (!result.canceled) {
+      await fs.writeFile(result.filePath, txt);
+    }
+  }
+
+  @handle("get-video-folders")
+  async getVideoFolders() {
+    return this.videoRepository.getVideoFolders();
+  }
+
+  @handle("get-page-title")
+  async getPageTitle(
+    event: IpcMainEvent,
+    url: string,
+  ): Promise<{ data: string }> {
+    try {
+      console.log("Getting title for URL:", url);
+
+      const response = await axios.get(url, {
+        timeout: 10000,
+        maxRedirects: 5,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        },
+      });
+
+      const html = response.data;
+      let title = "无标题";
+
+      const patterns = [
+        /<meta\s+property="og:title"\s+content="([^"]*)"/i,
+        /<meta\s+name="title"\s+content="([^"]*)"/i,
+        /<title[^>]*>([^<]+)<\/title>/i,
+      ];
+
+      for (const pattern of patterns) {
+        const match = html.match(pattern);
+        if (match && match[1]) {
+          title = match[1].trim();
+          console.log("Found title:", title);
+          break;
+        }
+      }
+
+      return { data: title };
+    } catch (error) {
+      console.error("Error fetching page title:", error);
+      return { data: "无标题" };
     }
   }
 }

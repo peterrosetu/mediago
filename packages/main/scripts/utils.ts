@@ -5,7 +5,7 @@ import consola from "consola";
 import fs from "fs-extra";
 import electron from "electron";
 
-const baseResolve = (...r) => resolve(__dirname, ...r);
+const baseResolve = (...r: any[]) => resolve(__dirname, ...r);
 export const mainResolve = (...r: string[]) => baseResolve("..", ...r);
 export const rootResolve = (...r: string[]) => baseResolve("../../..", ...r);
 
@@ -81,7 +81,7 @@ export class Env {
       return null;
     }
 
-    return Object.keys(parsed).reduce((prev, curr) => {
+    return Object.keys(parsed).reduce((prev: any, curr) => {
       prev[curr] = parsed[curr];
       return prev;
     }, {});

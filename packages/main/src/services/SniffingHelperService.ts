@@ -8,6 +8,7 @@ import {
   PERSIST_WEBVIEW,
   PRIVACY_WEBVIEW,
   formatHeaders,
+  urlCache,
 } from "../helper/index.ts";
 
 export interface SourceParams {
@@ -36,20 +37,25 @@ const filterList: SourceFilter[] = [
     type: DownloadType.m3u8,
   },
   {
-    // TODO: 合集、列表、收藏夹
+    // TODO: Collections, lists, favorites
     hosts: [/^https?:\/\/(www\.)?bilibili.com\/video/],
     type: DownloadType.bilibili,
     schema: {
       name: "title",
     },
   },
+  {
+    matches: [
+      /\.(mp4|flv|mov|avi|mkv|wmv|webm|mp3|m4a|aac|wav|ogg|m4b|m4p|m4r|m4b|m4p|m4r)/,
+    ],
+    type: DownloadType.direct,
+  },
 ];
 
 @injectable()
 export class SniffingHelper extends EventEmitter {
   private pageInfo: PageInfo = { title: "", url: "" };
-  private ready = false;
-  private queue: SourceParams[] = [];
+  private readonly prepareDelay = 1000;
 
   constructor(
     @inject(TYPES.ElectronLogger)
@@ -59,38 +65,38 @@ export class SniffingHelper extends EventEmitter {
   }
 
   pluginReady() {
-    this.ready = true;
-    this.queue.forEach((item) => {
-      this.emit("source", item);
-    });
+    // empty
   }
 
   update(pageInfo: PageInfo) {
     this.pageInfo = pageInfo;
   }
 
-  reset(pageInfo: PageInfo) {
-    this.pageInfo = pageInfo;
-    this.ready = false;
-    this.queue = [];
+  checkPageInfo() {
+    // Send page related information
+    const sendPageInfo = () => {
+      listLoop: for (const filter of filterList) {
+        if (filter.hosts) {
+          for (const host of filter.hosts) {
+            if (!host.test(this.pageInfo.url)) {
+              continue;
+            }
 
-    listLoop: for (const filter of filterList) {
-      if (filter.hosts) {
-        for (const host of filter.hosts) {
-          if (!host.test(pageInfo.url)) {
-            continue;
+            this.send({
+              url: this.pageInfo.url,
+              documentURL: this.pageInfo.url,
+              name: this.pageInfo.title,
+              type: filter.type,
+            });
+            break listLoop;
           }
-
-          this.send({
-            url: pageInfo.url,
-            documentURL: pageInfo.url,
-            name: pageInfo.title,
-            type: filter.type,
-          });
-          break listLoop;
         }
       }
-    }
+    };
+
+    setTimeout(() => {
+      sendPageInfo();
+    }, this.prepareDelay);
   }
 
   start(privacy: boolean = false) {
@@ -100,13 +106,16 @@ export class SniffingHelper extends EventEmitter {
   }
 
   send = (item: SourceParams) => {
-    this.logger.info(`在窗口中捕获视频链接: ${item.url}`);
-    // 等待 DOM 中浮窗加载完成
-    if (this.ready) {
-      this.emit("source", item);
-    } else {
-      this.queue.push(item);
+    const urlCacheKey = `${item.url}_${item.name}`;
+    const cacheUrl = urlCache.get(urlCacheKey);
+    if (cacheUrl) {
+      return;
     }
+
+    this.logger.info(`[SniffingHelper] send: ${item.url}`);
+    this.emit("source", item);
+
+    urlCache.set(urlCacheKey, true);
   };
 
   private onSendHeaders = (details: OnSendHeadersListenerDetails): void => {

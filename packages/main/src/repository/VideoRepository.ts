@@ -9,55 +9,74 @@ import {
 import { TYPES } from "../types.ts";
 import { In, Not } from "typeorm";
 import TypeORM from "../vendor/TypeORM.ts";
+import i18n from "../i18n/index.ts";
 
 @injectable()
 export default class VideoRepository {
   constructor(
     @inject(TYPES.TypeORM)
-    private readonly db: TypeORM
+    private readonly db: TypeORM,
   ) {}
 
   async addVideo(video: Omit<DownloadItem, "id">) {
-    // 先判断有没有同名的视频
-    const exist = await this.findVideoByName(video.name);
-    if (exist) {
-      throw new Error("视频名称已存在，请更换视频名称");
-    }
+    // Let's see if there's a video with the same name
+    // const exist = await this.findVideoByName(video.name);
+    // if (exist) {
+    //   throw new Error(i18n.t("videoExistsPleaseChangeName"));
+    // }
     const item = new Video();
     item.name = video.name;
     item.url = video.url;
     item.type = video.type;
     video.headers && (item.headers = video.headers);
+    video.folder && (item.folder = video.folder);
     return await this.db.manager.save(item);
   }
 
   async addVideos(videos: Omit<DownloadItem, "id">[]) {
+    // Check for videos with the same name
+    // const names = videos.map((item) => item.name);
+    // const existItems = await this.db.appDataSource
+    //   .getRepository(Video)
+    //   .findBy({ name: In(names) });
+    // if (existItems.length) {
+    //   const existNames = existItems.map((item) => item.name);
+    //   throw new Error(
+    //     i18n.t("videoExistsPleaseChangeName") +
+    //       "[" +
+    //       existNames.join(", ") +
+    //       "]",
+    //   );
+    // }
+
     const items = videos.map((video) => {
       const item = new Video();
       item.name = video.name;
       item.url = video.url;
       item.type = video.type;
       video.headers && (item.headers = video.headers);
+      video.folder && (item.folder = video.folder);
       return item;
     });
     return await this.db.manager.save(items);
   }
 
-  // 编辑视频
+  // Edit video
   async editVideo(video: DownloadItem) {
     const item = await this.db.appDataSource
       .getRepository(Video)
       .findOneBy({ id: video.id });
     if (!item) {
-      throw new Error("视频不存在");
+      throw new Error(i18n.t("videoNotExists"));
     }
     item.name = video.name;
     item.url = video.url;
+    video.folder && (item.folder = video.folder);
     video.headers && (item.headers = video.headers);
     return await this.db.manager.save(item);
   }
 
-  // 查找所有视频
+  // Find all Videos
   async findAllVideos() {
     return await this.db.appDataSource.getRepository(Video).find({
       order: {
@@ -100,7 +119,7 @@ export default class VideoRepository {
     const video = await repository.findOneBy({ id });
 
     if (!video) {
-      throw new Error("没有找到该视频");
+      throw new Error(i18n.t("videoNotExists"));
     }
 
     return video;
@@ -155,5 +174,16 @@ export default class VideoRepository {
   async getDownloadLog(id: number) {
     const video = await this.findVideo(id);
     return video.log;
+  }
+
+  async getVideoFolders() {
+    const videos = await this.db.appDataSource.getRepository(Video).find();
+    const folders = new Set<string>();
+    for (const video of videos) {
+      if (video.folder) {
+        folders.add(video.folder);
+      }
+    }
+    return Array.from(folders);
   }
 }
